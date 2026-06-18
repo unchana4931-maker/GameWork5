@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bomberman Online - Cyber Neon Edition (R-FIXED)</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(circle, #10101c 0%, #050508 100%);
+      text-align: center;
+      color: white;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      overflow-x: hidden;
+    }
+    
+    h2 {
+      font-size: 28px;
+      margin-top: 20px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      background: linear-gradient(45deg, #00fff7, #ff0055);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 10px rgba(0,255,247,0.3));
+    }
+
+    .scoreboard {
+      display: flex;
+      justify-content: center;
+      gap: 50px;
+      margin: 15px auto;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 10px 30px;
+      border-radius: 50px;
+      width: fit-content;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
+    }
+    
+    .score-box {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+    
+    #p1-score { color: #00fff7; text-shadow: 0 0 12px rgba(0, 255, 247, 0.8); }
+    #p2-score { color: #ff6a00; text-shadow: 0 0 12px rgba(255, 106, 0, 0.8); }
+    
+    .canvas-container {
+      position: relative;
+      width: 400px;
+      margin: 10px auto;
+    }
+
+    canvas {
+      background: #06060c;
+      border: 3px solid #1a1a2e;
+      border-radius: 8px;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.6), 0 0 20px rgba(0, 255, 247, 0.15);
+    }
+    
+    .instructions {
+      margin-top: 15px;
+      font-size: 13px;
+      color: #666;
+      letter-spacing: 1px;
+    }
+    .instructions span { color: #aaa; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h2>⚡ Cyber Bomberman ⚡</h2>
+
+<div class="scoreboard">
+  <div id="p1-score" class="score-box">P1 (BLUE): 0</div>
+  <div id="p2-score" class="score-box">P2 (ORANGE): 0</div>
+</div>
+
+<div class="canvas-container">
+  <canvas id="game" width="400" height="400"></canvas>
+</div>
+
+<div class="instructions">
+  P1: <span>W A S D</span> + <span>Space</span> | P2: <span>Arrow Keys</span> + <span>Enter</span> | Reset: <span>R</span>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  onSnapshot, 
+  getDoc,
+  deleteField // ⚡ ทำลายฟิลด์ระเบิดบน Cloud ทิ้งแบบเด็ดขาด
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// Firebase Config
+const firebaseConfig = {
+  apiKey: "AIzaSyCq-fc9o99zk642K_jbc7v1D7tKg7YetAk",
+  authDomain: "game-e969b.firebaseapp.com",
+  projectId: "game-e969b",
+  storageBucket: "game-e969b.firebasestorage.app",
+  messagingSenderId: "98000567804",
+  appId: "1:98000567804:web:73d906fa46cfedf9b08679",
+  measurementId: "G-KR9D13PXQ9"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const gameDocRef = doc(db, "bomberman", "room_1");
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const size = 40;
+
+// Local Game State
+const state = {
+  p1: { x:0, y:0, frame:0, dir:1, moving:false },
+  p2: { x:8, y:8, frame:0, dir:-1, moving:false },
+  scores: { p1: 0, p2: 0 },
+  bombs: {},
+  gameOver: false,
+  winner: ""
+};
+
+getDoc(gameDocRef).then((docSnap) => {
+  if (!docSnap.exists()) {
+    setDoc(gameDocRef, state);
+  }
+});
+
+// Input Handler
+window.addEventListener("keydown", (e) => {
+  if (e.key === "r" || e.key === "R") {
+    resetGame();
+    return;
+  }
+  if ([" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+    e.preventDefault();
+  }
+  if (state.gameOver) return;
+
+  if (e.code === "KeyW") move("p1", 0, -1);
+  if (e.code === "KeyS") move("p1", 0, 1);
+  if (e.code === "KeyA") move("p1", -1, 0);
+  if (e.code === "KeyD") move("p1", 1, 0);
+  if (e.code === "Space") dropBomb("p1");
+
+  if (e.key === "ArrowUp") move("p2", 0, -1);
+  if (e.key === "ArrowDown") move("p2", 0, 1);
+  if (e.key === "ArrowLeft") move("p2", -1, 0);
+  if (e.key === "ArrowRight") move("p2", 1, 0);
+  if (e.key === "Enter") dropBomb("p2");
+});
+
+function move(p, dx, dy) {
+  if (!state[p] || state.gameOver) return;
+  state[p].x = Math.max(0, Math.min(9, state[p].x + dx));
+  state[p].y = Math.max(0, Math.min(9, state[p].y + dy));
+  state[p].frame = (state[p].frame + 1) % 4;
+  state[p].moving = true;
+  if (dx !== 0) state[p].dir = dx; 
+
+  updateDoc(gameDocRef, { [p]: state[p] });
+
+  setTimeout(() => {
+    if (!state[p]) return;
+    state[p].moving = false;
+    updateDoc(gameDocRef, { [`${p}.moving`]: false });
+  }, 120);
+}
+
+function dropBomb(p) {
+  if (!state[p] || state.gameOver) return;
+  const bx = state[p].x;
+  const by = state[p].y;
+  const bombKey = `${bx}_${by}`;
+
+  if (state.bombs && state.bombs[bombKey]) return;
+  const newBomb = { x: bx, y: by, owner: p, exploding: false, createdAt: Date.now() };
+  
+  updateDoc(gameDocRef, { [`bombs.${bombKey}`]: newBomb });
+
+  setTimeout(() => {
+    // ⚡ แก้ไขจุดหลัก: ถ้ากด R เคลียร์เกมไปแล้ว ให้ยกเลิกการระเบิดค้างคาของลูกเก่าทันที
+    if (state.gameOver === false && Object.keys(state.bombs).length === 0) return;
+
+    getDoc(gameDocRef).then((snap) => {
+      if (!snap.exists() || !snap.data().bombs || !snap.data().bombs[bombKey]) return;
+
+      updateDoc(gameDocRef, { [`bombs.${bombKey}.exploding`]: true });
+      checkExplosionDamage(bx, by);
+
+      setTimeout(() => {
+        // ⚡ ใช้ deleteField ลบเฉพาะคีย์ระเบิดนั้นๆ ป้องกันข้อมูลทับซ้อนระบบรีเซ็ต
+        updateDoc(gameDocRef, { [`bombs.${bombKey}`]: deleteField() });
+      }, 500);
+    });
+  }, 2000);
+}
+
+function checkExplosionDamage(bx, by) {
+  const affectedTiles = [{x: bx, y: by}, {x: bx+1, y: by}, {x: bx-1, y: by}, {x: bx, y: by+1}, {x: bx, y: by-1}];
+  let p1Hit = affectedTiles.some(tile => tile.x === state.p1.x && tile.y === state.p1.y);
+  let p2Hit = affectedTiles.some(tile => tile.x === state.p2.x && tile.y === state.p2.y);
+
+  if (p1Hit || p2Hit) {
+    let winner = "";
+    let currentScores = { ...state.scores };
+    if (p1Hit && p2Hit) winner = "TIE ROUND";
+    else if (p1Hit) { winner = "🔵 PLAYER 2 WINS"; currentScores.p2 += 1; }
+    else if (p2Hit) { winner = "🟢 PLAYER 1 WINS"; currentScores.p1 += 1; }
+    updateDoc(gameDocRef, { gameOver: true, winner: winner, scores: currentScores });
+  }
+}
+
+// ⚡ ล้างห้องแบบถอนรากถอนโคนด้วยคำสั่งเด็ดขาดของ Firestore
+function resetGame() {
+  updateDoc(gameDocRef, {
+    p1: { x:0, y:0, frame:0, dir:1, moving:false },
+    p2: { x:8, y:8, frame:0, dir:-1, moving:false },
+    bombs: deleteField(), // ล้าง Object ฟิลด์ระเบิดทั้งหมดเกลี้ยงตับบนเซิร์ฟเวอร์
+    gameOver: false,
+    winner: ""
+  });
+}
+
+onSnapshot(gameDocRef, (docSnap) => {
+  const data = docSnap.data();
+  if (!data) return;
+  if (data.p1) state.p1 = data.p1;
+  if (data.p2) state.p2 = data.p2;
+  if (data.scores) {
+    state.scores = data.scores;
+    document.getElementById("p1-score").innerText = `P1 (BLUE): ${data.scores.p1}`;
+    document.getElementById("p2-score").innerText = `P2 (ORANGE): ${data.scores.p2}`;
+  }
+  
+  // ⚡ บังคับเคลียร์ระเบิดหน้าจอเครื่องเราทันทีถ้าเซิร์ฟเวอร์สั่งลบไปแล้ว
+  state.bombs = data.bombs ? data.bombs : {};
+  
+  state.gameOver = data.gameOver || false;
+  state.winner = data.winner || "";
+});
+
+// Main Render Loop
+setInterval(() => {
+  ctx.clearRect(0, 0, 400, 400);
+  
+  for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < 10; j++) {
+      ctx.strokeStyle = "rgba(0, 255, 247, 0.04)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(i * size, j * size, size, size);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.02)";
+      ctx.fillRect(i * size + 1, j * size + 1, 2, 2);
+    }
+  }
+
+  Object.values(state.bombs).forEach(bomb => {
+    const x = bomb.x * size, y = bomb.y * size;
+    if (bomb.exploding) {
+      let pulse = Math.floor(Date.now() / 50) % 2 === 0;
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#ff2a00";
+      ctx.fillStyle = pulse ? "rgba(255, 68, 0, 0.9)" : "rgba(255, 170, 0, 0.9)";
+      ctx.fillRect(x, y - size, size, size * 3); 
+      ctx.fillRect(x - size, y, size * 3, size);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(x + 6, y + 6, size - 12, size - 12);
+      ctx.shadowBlur = 0;
+    } else {
+      let timePassed = Date.now() - (bomb.createdAt || Date.now());
+      let flash = Math.floor(timePassed / 200) % 2 === 0;
+      ctx.shadowBlur = flash ? 15 : 5;
+      ctx.shadowColor = "#ff0055";
+      ctx.fillStyle = "#1e1e2f";
+      ctx.strokeStyle = flash ? "#ff0055" : "#7b002c";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x + 20, y + 20, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "#00fff7"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x + 20, y + 7); ctx.quadraticCurveTo(x + 25, y + 2, x + 30, y + 4); ctx.stroke();
+      ctx.fillStyle = flash ? "#ff0055" : "#330011";
+      ctx.beginPath(); ctx.arc(x + 20, y + 20, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  });
+  
+  const drawPlayer = (p, primaryColor, secondaryColor) => {
+    if(!p) return;
+    ctx.save();
+    ctx.translate(p.x * size + 20, p.y * size + 20);
+    ctx.scale(p.dir, 1);
+    let bobbing = p.moving ? Math.sin(Date.now() / 40) * 2 : 0;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = primaryColor;
+    if (p.moving) {
+      ctx.fillStyle = "#ffaa00";
+      ctx.fillRect(-4, 12, 8, 5);
+    }
+    ctx.fillStyle = primaryColor;
+    ctx.beginPath();
+    ctx.arc(0, -9 + bobbing, 8, 0, Math.PI, true);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(1, -12 + bobbing, 6, 3);
+    ctx.fillStyle = "#151522";
+    ctx.strokeStyle = primaryColor;
+    ctx.lineWidth = 2;
+    ctx.fillRect(-7, -4 + bobbing, 14, 15);
+    ctx.strokeRect(-7, -4 + bobbing, 14, 15);
+    ctx.fillStyle = secondaryColor;
+    ctx.fillRect(-3, 1 + bobbing, 6, 4);
+    ctx.restore();
+    ctx.shadowBlur = 0;
+  };
+
+  drawPlayer(state.p1, "#00fff7", "#005577");
+  drawPlayer(state.p2, "#ff6a00", "#772200");
+
+  if (state.gameOver) {
+    let overlayGrad = ctx.createLinearGradient(0, 0, 0, 400);
+    overlayGrad.addColorStop(0, "rgba(5, 5, 10, 0.85)");
+    overlayGrad.addColorStop(1, "rgba(20, 10, 25, 0.95)");
+    ctx.fillStyle = overlayGrad;
+    ctx.fillRect(0, 0, 400, 400);
+    ctx.strokeStyle = "rgba(255, 0, 85, 0.4)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, 120, 320, 160);
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#ff0055";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 28px 'Segoe UI', Arial";
+    ctx.fillText(state.winner, 200, 185);
+    let textFlash = Math.floor(Date.now() / 400) % 2 === 0;
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = textFlash ? "#00fff7" : "rgba(0, 255, 247, 0.4)";
+    ctx.font = "600 14px 'Segoe UI', Arial";
+    ctx.fillText("PRESS 'R' FOR NEXT SYSTEM CYBER-ROUND", 200, 235);
+  }
+}, 100);
+
+ctx.textAlign = "center";
+</script>
+</body>
+</html>
